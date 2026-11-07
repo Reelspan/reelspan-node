@@ -353,16 +353,23 @@ export class Reelspan {
     /** Each network's result for a request_id (or a scheduled job_id). */
     status: (id: { requestId?: string; jobId?: string }) => this.request<PostStatus>('GET', '/v1/posts/status', { query: { request_id: id.requestId, job_id: id.jobId } }),
     /** Polls status until every network has finished (or the timeout passes). */
+    /** Polls status (every 5 s by default, the API's advice) until every network has finished, or the timeout passes. */
     wait: async (requestId: string, opts: { timeoutMs?: number; intervalMs?: number; signal?: AbortSignal } = {}) => {
       const end = Date.now() + (opts.timeoutMs ?? 600_000);
       for (;;) {
         const s = await this.request<PostStatus>('GET', '/v1/posts/status', { query: { request_id: requestId }, signal: opts.signal });
         if (['completed', 'failed', 'cancelled'].includes(s.status) || Date.now() > end) return s;
-        await sleep(opts.intervalMs ?? 3000, opts.signal);
+        await sleep(opts.intervalMs ?? 5000, opts.signal);
       }
     },
-    /** Sends the failed networks again, with the media it already has. */
-    retry: (requestId: string, platforms?: string[]) => this.request<PostResponse>('POST', '/v1/posts/retry', { json: { request_id: requestId, platforms }, idempotencyKey: uuid() }),
+    /**
+     * Sends the failed networks again, with the media it already has. `fields` changes settings for this try (e.g. a
+     * new caption). Not repeated automatically on a network error: the server can't tell a repeat from a new retry.
+     */
+    retry: (requestId: string, opts: string[] | { platforms?: string[]; fields?: Fields; jobId?: string } = {}) => {
+      const o = Array.isArray(opts) ? { platforms: opts } : opts;
+      return this.request<PostResponse>('POST', '/v1/posts/retry', { json: { request_id: requestId, job_id: o.jobId, platforms: o.platforms, fields: o.fields } });
+    },
     /** One page of history, one row per network post. */
     history: (query: HistoryQuery = {}) =>
       this.request<Json & { history: Json[]; in_progress: Json[]; total: number; page: number; limit: number }>('GET', '/v1/posts', { query }),
@@ -389,7 +396,7 @@ export class Reelspan {
   readonly queue = {
     settings: (username: string) => this.request('GET', '/v1/queue/settings', { query: { profile_username: username } }),
     setSettings: (username: string, settings: Json) => this.request('POST', '/v1/queue/settings', { json: { profile_username: username, ...settings } }),
-    preview: (username: string) => this.request('GET', '/v1/queue/preview', { query: { profile_username: username } }),
+    preview: (username: string, count?: number) => this.request('GET', '/v1/queue/preview', { query: { profile_username: username, count } }),
     nextSlot: (username: string) => this.request('GET', '/v1/queue/next-slot', { query: { profile_username: username } }),
     /** Keeps the queue from using this slot (ISO-8601 with an offset). */
     markFull: (username: string, slot: string) => this.request('POST', '/v1/queue/slot-full', { json: { profile_username: username, slot_datetime: slot } }),
@@ -417,7 +424,7 @@ export class Reelspan {
   };
 
   private async uploadInParts(blob: Blob, filename: string, kind: 'video' | 'photo' | 'document', onProgress?: (sent: number, total: number) => void): Promise<MediaUpload> {
-    const start = await this.request<Json & { media_id: string; part_size: number; parts: { part_number: number; url: string }[] }>('POST', '/v1/media/uploads', { json: { kind, size_bytes: blob.size, filename }, idempotencyKey: uuid() });
+    const start = await this.request<Json & { media_id: string; part_size: number; parts: { part_number: number; url: string }[] }>('POST', '/v1/media/uploads', { json: { kind, size_bytes: blob.size, filename } });
     const done: { part_number: number; etag: string }[] = [];
     let sent = 0;
     try {
@@ -443,7 +450,7 @@ export class Reelspan {
         }
       };
       await Promise.all([worker(), worker(), worker()]);
-      return await this.request<MediaUpload>('POST', `/v1/media/uploads/${enc(start.media_id)}/complete`, { json: { parts: done.sort((a, b) => a.part_number - b.part_number) }, idempotencyKey: uuid() });
+      return await this.request<MediaUpload>('POST', `/v1/media/uploads/${enc(start.media_id)}/complete`, { json: { parts: done.sort((a, b) => a.part_number - b.part_number) } });
     } catch (err) {
       await this.request('POST', `/v1/media/uploads/${enc(start.media_id)}/abort`, { maxRetries: 0 }).catch(() => undefined);
       throw err;
@@ -495,8 +502,9 @@ export class Reelspan {
   };
 
   readonly approvals = {
-    create: (p: { user: string; jobIds: string[]; title?: string; note?: string; expiresInDays?: number }) =>
-      this.request('POST', '/v1/approval-links', { json: { profile_username: p.user, job_ids: p.jobIds, title: p.title, note: p.note, expires_in_days: p.expiresInDays } }),
+    /** Scheduled posts by `jobIds`, or every post of a request by `requestIds`. */
+    create: (p: { user: string; jobIds?: string[]; requestIds?: string[]; title?: string; note?: string; expiresInDays?: number }) =>
+      this.request('POST', '/v1/approval-links', { json: { profile_username: p.user, job_ids: p.jobIds, request_ids: p.requestIds, title: p.title, note: p.note, expires_in_days: p.expiresInDays } }),
     list: (username?: string) => this.request('GET', '/v1/approval-links', { query: { profile_username: username } }),
     delete: (id: string) => this.request('DELETE', `/v1/approval-links/${enc(id)}`),
   };
@@ -506,7 +514,7 @@ export class Reelspan {
     set: (url: string, events?: string[]) => this.request('POST', '/v1/webhook', { json: { webhook_url: url, webhook_events: events } }),
     delete: () => this.request('DELETE', '/v1/webhook'),
     test: () => this.request('POST', '/v1/webhook/test'),
-    deliveries: () => this.request('GET', '/v1/webhook/deliveries'),
+    deliveries: (limit?: number) => this.request('GET', '/v1/webhook/deliveries', { query: { limit } }),
     redeliver: (deliveryId: string) => this.request('POST', `/v1/webhook/deliveries/${enc(deliveryId)}/redeliver`),
     /** A new signing secret; the old one stops working. */
     rotateSecret: () => this.request<Json & { webhook_secret: string }>('POST', '/v1/webhook/secret'),
