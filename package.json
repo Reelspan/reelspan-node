@@ -57,7 +57,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.cjs.json && node -e \"require('fs').writeFileSync('dist/cjs/package.json', JSON.stringify({ type: 'commonjs' }))\"",
     "test": "npm run build && node --test test/client.test.mjs",
-    "prepublishOnly": "npm run build && node --test test/client.test.mjs"
+    "prepublishOnly": "npm run build && node --test test/client.test.mjs",
+    "prepare": "npm run build"
   },
   "devDependencies": {
     "typescript": "^5.9.0"
