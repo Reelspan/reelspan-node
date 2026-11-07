@@ -1,0 +1,24 @@
+# Publishes to npm when a GitHub release is published (tag v1.2.3, matching package.json). Uses npm trusted
+# publishing: no token is stored here; npmjs.com trusts this workflow, and the package gets a provenance statement.
+name: Release
+on:
+  release:
+    types: [published]
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Tag matches package.json
+        run: test "v$(node -p "require('./package.json').version")" = "${GITHUB_REF_NAME}"
+      - run: npm ci
+      - run: npm test
+      - run: npm publish --provenance --access public

@@ -1,0 +1,73 @@
+{
+  "name": "reelspan",
+  "version": "1.0.0",
+  "description": "Official Node.js and TypeScript client for the Reelspan API: publish videos, photos and text to TikTok, YouTube, Instagram, Facebook, X, Threads, LinkedIn, Pinterest, Bluesky, Reddit and 12 more networks from one call.",
+  "license": "MIT",
+  "author": "Anjum Labs <support@reelspan.com>",
+  "homepage": "https://reelspan.com/docs/sdks",
+  "bugs": {
+    "url": "https://github.com/reelspan/reelspan-node/issues",
+    "email": "support@reelspan.com"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": false,
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/index.d.ts",
+        "default": "./dist/cjs/index.js"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "reelspan",
+    "social media",
+    "social media api",
+    "publishing",
+    "scheduling",
+    "tiktok",
+    "youtube",
+    "instagram",
+    "facebook",
+    "linkedin",
+    "x",
+    "threads",
+    "pinterest",
+    "bluesky",
+    "reddit",
+    "upload-post"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.cjs.json && node -e \"require('fs').writeFileSync('dist/cjs/package.json', JSON.stringify({ type: 'commonjs' }))\"",
+    "test": "npm run build && node --test test/client.test.mjs",
+    "prepublishOnly": "npm run build && node --test test/client.test.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/reelspan/reelspan-node.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}
