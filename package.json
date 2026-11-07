@@ -1,7 +1,7 @@
 {
   "name": "reelspan",
   "version": "1.0.0",
-  "description": "Official Node.js and TypeScript client for the Reelspan API: publish videos, photos and text to TikTok, YouTube, Instagram, Facebook, X, Threads, LinkedIn, Pinterest, Bluesky, Reddit and 12 more networks from one call.",
+  "description": "Official Node.js and TypeScript client for the Reelspan API: publish videos, photos and text to TikTok, YouTube, Instagram, Facebook, X, Threads, LinkedIn, Pinterest, Bluesky, Reddit and more from one call.",
   "license": "MIT",
   "author": "Anjum Labs <support@reelspan.com>",
   "homepage": "https://reelspan.com/docs/sdks",
