@@ -6,7 +6,7 @@
   "author": "Anjum Labs <support@reelspan.com>",
   "homepage": "https://reelspan.com/docs/sdks",
   "bugs": {
-    "url": "https://github.com/reelspan/reelspan-node/issues",
+    "url": "https://github.com/Reelspan/reelspan-node/issues",
     "email": "support@reelspan.com"
   },
   "type": "module",
@@ -64,7 +64,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/reelspan/reelspan-node.git"
+    "url": "git+https://github.com/Reelspan/reelspan-node.git"
   },
   "publishConfig": {
     "access": "public",
