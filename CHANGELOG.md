@@ -11,5 +11,5 @@ First public release.
 - Retries with backoff on network errors, 408, 409, 429 and 5xx, honouring `Retry-After`; POSTs are retried only with
   an idempotency key, and every post gets one automatically.
 - Large files go to storage in parts, three at a time, with progress and per-part retries.
-- ESM and CommonJS builds with TypeScript types; runs on Node 18+, Deno, Bun and edge runtimes.
+- ESM and CommonJS builds with TypeScript types; runs on Node 20+, Deno, Bun and edge runtimes.
 - `ReelspanError` (status, code, retryAfter) and `ReelspanConnectionError`; `verifyWebhook` for signed webhooks.

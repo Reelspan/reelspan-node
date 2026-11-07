@@ -5,7 +5,7 @@ photo set or text post to TikTok, YouTube, Instagram, Facebook, X, Threads, Link
 Google Business, Telegram, Discord, Slack, Mastodon, Nostr, Lemmy, Dev.to, Hashnode, WordPress, Whop and Listmonk,
 schedule it, and read how it did.
 
-- No dependencies. Node 18+, Deno, Bun and edge runtimes; ESM and CommonJS; full TypeScript types.
+- No dependencies. Node 20+, Deno, Bun and edge runtimes; ESM and CommonJS; full TypeScript types.
 - Retries network errors, 429s and 5xx answers with backoff, honouring `Retry-After`.
 - Every post carries an `Idempotency-Key`, so a retried post is never published twice.
 - Large files go straight to storage in parts, with progress and per-part retries.

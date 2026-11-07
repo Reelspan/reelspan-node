@@ -519,7 +519,7 @@ export class Reelspan {
   };
 }
 
-/** Aborts when either does (AbortSignal.any where it exists; Node 18 lacks it). */
+/** Aborts when either does (AbortSignal.any where it exists; early Node 20 releases lack it). */
 function anySignal(a: AbortSignal, b: AbortSignal): AbortSignal {
   if (typeof AbortSignal.any === 'function') return AbortSignal.any([a, b]);
   const c = new AbortController();
