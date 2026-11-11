@@ -4,7 +4,7 @@
 // Robust by default: network errors, 429s and 5xx answers are retried with backoff (honouring Retry-After), and every
 // post carries an Idempotency-Key, so a retried post is never published twice.
 
-export const VERSION = '1.0.1';
+export const VERSION = '1.0.2';
 
 export type Fields = Record<string, string | number | boolean | string[] | undefined | null>;
 /** A file to upload: bytes with a name, a Blob or File, or a public https URL (Google Drive and Dropbox share links work). */
