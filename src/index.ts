@@ -27,7 +27,6 @@ export type Platform =
   | 'discord'
   | 'slack'
   | 'mastodon'
-  | 'lemmy'
   | 'devto'
   | 'hashnode'
   | 'wordpress'
@@ -285,7 +284,7 @@ export class Reelspan {
   readonly accounts = {
     /**
      * Connects a network that uses credentials instead of an OAuth sign-in (Telegram, Discord, Slack, Mastodon,
-     * WordPress, Dev.to, Hashnode, Lemmy, Bluesky). The fields are checked with the network
+     * WordPress, Dev.to, Hashnode, Bluesky). The fields are checked with the network
      * first. Upload-Post's field names work too, e.g. `{ chat_id }`, `{ instance_url, access_token }`.
      */
     connect: (username: string, platform: Platform | (string & {}), credentials: Record<string, string | number | string[]>) =>
