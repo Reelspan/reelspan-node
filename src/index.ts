@@ -470,13 +470,6 @@ export class Reelspan {
 
   /** Captions written by AI (each call uses one AI credit). */
   readonly ai = {
-    /** Captions for each network from a video file or public URL: frames and speech are read on the server. */
-    captionsFromVideo: (video: FileInput, opts: { platforms?: string[]; language?: string; context?: string } = {}) => {
-      const form = new FormData();
-      appendFile(form, 'video', video);
-      appendFields(form, { platforms: opts.platforms?.join(','), language: opts.language, context: opts.context });
-      return this.request('POST', '/v1/ai/video-captions', { form });
-    },
     /** Captions for each network from whatever the post has: your text, an uploaded video (mediaId) or photos. */
     writeCaptions: (input: { text?: string; notes?: string; mediaId?: string; photoMediaIds?: string[]; platforms?: string[]; kind?: 'video' | 'photo' | 'text'; language?: string }) =>
       this.request('POST', '/v1/ai/adapt-captions', { json: { text: input.text, notes: input.notes, media_id: input.mediaId, photo_media_ids: input.photoMediaIds, platforms: input.platforms, kind: input.kind, language: input.language } }),
