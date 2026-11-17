@@ -4,7 +4,7 @@
 // Robust by default: network errors, 429s and 5xx answers are retried with backoff (honouring Retry-After), and every
 // post carries an Idempotency-Key, so a retried post is never published twice.
 
-export const VERSION = '1.0.2';
+export const VERSION = '1.1.0';
 
 export type Fields = Record<string, string | number | boolean | string[] | undefined | null>;
 /** A file to upload: bytes with a name, a Blob or File, or a public https URL (Google Drive and Dropbox share links work). */
@@ -177,6 +177,47 @@ function common(p: PostCommon): Fields {
 const postOpts = (p: PostCommon): RequestOptions => ({ idempotencyKey: p.idempotencyKey ?? uuid(), signal: p.signal });
 
 export type HistoryQuery = { page?: number; limit?: 10 | 20 | 50 | 100; platform?: string; status?: 'success' | 'failed'; profile_username?: string; request_id?: string; job_id?: string; external_id?: string; start?: string; end?: string };
+
+/**
+ * A live post on a network: `requestId` for a post Reelspan published (with `platform` when it went to several
+ * networks), or `platform`, `user` and `postId` (the network's own id) for any post of the profile's account.
+ */
+export type PostTarget = { requestId?: string; platform?: Platform | (string & {}); user?: string; postId?: string };
+/** A post to read or answer comments on: `postId`, `postUrl` (Instagram, Bluesky) or the `requestId` that published it. */
+export type CommentTarget = { platform: Platform | (string & {}); user: string; postId?: string; postUrl?: string; requestId?: string };
+/** A published YouTube video: the `requestId` that published it, or `user` with the YouTube `videoId`. */
+export type YouTubeVideo = { requestId?: string; user?: string; videoId?: string };
+/** A link button on a private reply or DM (Instagram, Facebook). */
+export type LinkButton = { title: string; url: string };
+
+export type Comment = Json & { id: string; text: string; created_at: string | null; author: Json & { id: string | null; username: string | null }; parent_id: string | null };
+export type CommentAction = 'hide' | 'unhide' | 'like' | 'unlike' | 'approve' | 'ignore' | 'hold' | 'ban_author' | 'edit' | 'enable_comments' | 'disable_comments';
+export type AutoDmMonitor = Json & {
+  monitor_id: string;
+  platform: string;
+  post_id: string;
+  status: 'running' | 'paused' | 'stopped' | 'expired';
+  stats: { total_comments: number; new_comments: number; successful_replies: number; failed_replies: number };
+};
+export type SubtitleTrack = Json & { id: string; language: string; name: string; kind?: string | null; status?: string | null; draft?: boolean };
+export type ActivityType = 'posts' | 'comments' | 'accounts' | 'team' | 'developers' | 'billing' | 'security';
+export type ActivityEntry = Json & {
+  id: string;
+  at: string;
+  action: string;
+  type: ActivityType | 'other';
+  platform: string | null;
+  profile: string | null;
+  actor: { kind: 'member' | 'key' | 'system'; id: string | null; name: string };
+  target: { type: string | null; id: string | null };
+  metadata: Json;
+};
+export type Preferences = { weekStartDay: 0 | 1; timezone: string | null };
+export type LimitWindow = { used: number; limit: number; remaining: number; window_seconds: number };
+
+const postTarget = (t: PostTarget) => ({ request_id: t.requestId, platform: t.platform, user: t.user, post_id: t.postId });
+const commentTarget = (t: CommentTarget) => ({ platform: t.platform, user: t.user, post_id: t.postId, post_url: t.postUrl, request_id: t.requestId });
+const ytVideo = (v: YouTubeVideo) => ({ request_id: v.requestId, user: v.user, video_id: v.videoId });
 
 /** Files at or above this size go straight to storage in parts (POST /v1/media/uploads) instead of one request. */
 export const DIRECT_UPLOAD_BYTES = 90 * 1024 * 1024;
@@ -362,10 +403,27 @@ export class Reelspan {
      * Sends the failed networks again, with the media it already has. `fields` changes settings for this try (e.g. a
      * new caption). Not repeated automatically on a network error: the server can't tell a repeat from a new retry.
      */
-    retry: (requestId: string, opts: string[] | { platforms?: string[]; fields?: Fields; jobId?: string } = {}) => {
+    retry: (requestId: string, opts: string[] | { platforms?: string[]; fields?: Fields; jobId?: string; scheduledDate?: string; timezone?: string } = {}) => {
       const o = Array.isArray(opts) ? { platforms: opts } : opts;
-      return this.request<PostResponse>('POST', '/v1/posts/retry', { json: { request_id: requestId, job_id: o.jobId, platforms: o.platforms, fields: o.fields } });
+      const later = Array.isArray(opts) ? {} : { scheduled_date: opts.scheduledDate, timezone: opts.timezone };
+      return this.request<PostResponse>('POST', '/v1/posts/retry', { json: { request_id: requestId, job_id: o.jobId, platforms: o.platforms, fields: o.fields, ...later } });
     },
+    /** Deletes a live post on the network itself (not TikTok, which has no delete, or Instagram stories). */
+    unpublish: (target: PostTarget) =>
+      this.request<Json & { success: true; platform: string; post_id: string; message: string }>('POST', '/v1/posts/unpublish', { json: postTarget(target) }),
+    /**
+     * Changes a live post where the network allows it. `fields` changes network settings by upload field name
+     * (e.g. `{ pinterest_link: 'https://…' }`). An edit on X makes a new post id, returned with `previous_post_id`.
+     */
+    edit: (target: PostTarget & { text?: string; title?: string; description?: string; fields?: Record<string, string> }) =>
+      this.request<Json & { success: true; platform: string; post_id: string; url: string | null; previous_post_id?: string; warnings?: string[] }>('POST', '/v1/posts/edit', {
+        json: { ...postTarget(target), text: target.text, title: target.title, description: target.description, fields: target.fields },
+      }),
+    /** Reshares a post from the profile's account (any public post, not only your own). */
+    repost: (target: PostTarget & { commentary?: string; targetLinkedinPageId?: string }) =>
+      this.request<Json & { success: true; platform: string; post_id: string; repost_id: string | null; url: string | null }>('POST', '/v1/posts/repost', {
+        json: { ...postTarget(target), commentary: target.commentary, target_linkedin_page_id: target.targetLinkedinPageId },
+      }),
     /** One page of history, one row per network post. */
     history: (query: HistoryQuery = {}) =>
       this.request<Json & { history: Json[]; in_progress: Json[]; total: number; page: number; limit: number }>('GET', '/v1/posts', { query }),
@@ -387,6 +445,11 @@ export class Reelspan {
     edit: (jobId: string, patch: { scheduled_date?: string; timezone?: string; title?: string; description?: string; fields?: Fields }) => this.request('PATCH', `/v1/scheduled/${enc(jobId)}`, { json: patch }),
     /** `withLaterRepeats` also cancels the later posts of a repeating series. */
     cancel: (jobId: string, opts: { withLaterRepeats?: boolean } = {}) => this.request('DELETE', `/v1/scheduled/${enc(jobId)}`, { query: { series: opts.withLaterRepeats ? 'rest' : undefined } }),
+    /** Signed links (valid an hour) to every file the scheduled post will publish, to play or show it. */
+    preview: (jobId: string) =>
+      this.request<Json & { success: true; job_id: string; expires_in: number; media: { role: string; media_id: string; kind: string; content_type: string; size_bytes: number; url: string }[] }>('GET', `/v1/scheduled/${enc(jobId)}/preview`),
+    /** A signed link (valid an hour) to a 480 px JPEG of the post: a video frame, or the cover or first photo. */
+    thumbnail: (jobId: string) => this.request<Json & { success: true; thumbnail_url: string; expires_in: number }>('GET', `/v1/scheduled/${enc(jobId)}/thumbnail`, { query: { format: 'json' } }),
   };
 
   readonly queue = {
@@ -478,16 +541,273 @@ export class Reelspan {
   };
 
   readonly pinterest = {
-    /** Creates a board on the profile's Pinterest account. */
-    createBoard: (username: string, name: string) => this.request<Json & { board: { id: string; name: string } }>('POST', '/v1/pinterest/boards', { json: { profile_username: username, name } }),
+    /** The boards of the profile's Pinterest account, read live. */
+    boards: (username: string) => this.request<Json & { success: true; boards: { id: string; name: string }[]; pinterest_account_used: string | null }>('GET', '/v1/pinterest/boards', { query: { profile_username: username } }),
+    /** Creates a board on the profile's Pinterest account. PROTECTED boards are hidden from others but can be posted to. */
+    createBoard: (username: string, name: string, opts: { description?: string; privacy?: 'PUBLIC' | 'PROTECTED' } = {}) =>
+      this.request<Json & { board: { id: string; name: string } }>('POST', '/v1/pinterest/boards', { json: { profile_username: username, name, description: opts.description, privacy: opts.privacy } }),
+    sections: (username: string, boardId: string) =>
+      this.request<Json & { success: true; board_id: string; sections: { id: string; name: string }[] }>('GET', `/v1/pinterest/boards/${enc(boardId)}/sections`, { query: { profile_username: username } }),
+    createSection: (username: string, boardId: string, name: string) =>
+      this.request<Json & { success: true; board_id: string; section: { id: string; name: string } }>('POST', `/v1/pinterest/boards/${enc(boardId)}/sections`, { json: { profile_username: username, name } }),
+    /** Saves (repins) a Pin to one of the account's boards. */
+    savePin: (username: string, pinId: string, boardId: string, sectionId?: string) =>
+      this.request<Json & { success: true; post_id: string; url: string; board_id: string; board_section_id: string | null; parent_pin_id: string | null }>('POST', '/v1/posts/save', {
+        json: { profile_username: username, platform: 'pinterest', post_id: pinId, pinterest_board_id: boardId, pinterest_board_section_id: sectionId },
+      }),
   };
 
   readonly analytics = {
     account: (username: string, platforms?: string[]) => this.request('GET', `/v1/analytics/${enc(username)}`, { query: { platforms } }),
     history: (username: string, query: { days?: number; platforms?: string[] } = {}) => this.request('GET', `/v1/analytics/${enc(username)}/history`, { query }),
+    /** Stats of a post Reelspan published, by its request_id. */
     post: (requestId: string, platform?: string) => this.request('GET', `/v1/post-analytics/${enc(requestId)}`, { query: { platform } }),
+    /** Stats of any post of the profile's account by the network's own post id, including posts made outside Reelspan. */
+    postById: (username: string, platform: Platform | (string & {}), platformPostId: string) =>
+      this.request<Json & { success: true; platform: string; platform_post_id: string; metrics: Json }>('GET', '/v1/post-analytics', { query: { profile_username: username, platform, platform_post_id: platformPostId } }),
+    /**
+     * Impressions and views (or other `metrics`) added up over the profile's posts in a period, per network and per
+     * day: the last `days` (default 30), or `startDate` to `endDate` (YYYY-MM-DD, inclusive).
+     */
+    impressions: (username: string, query: { days?: number; startDate?: string; endDate?: string; platforms?: string[]; metrics?: string[] } = {}) =>
+      this.request<Json & { success: true; profile_username: string; from: string; to: string; posts: number; posts_with_stats: number; total: Record<string, number>; by_platform: Record<string, Record<string, number>>; by_day: Record<string, string | number>[] }>(
+        'GET',
+        `/v1/analytics/${enc(username)}/impressions`,
+        { query: { days: query.days, start_date: query.startDate, end_date: query.endDate, platforms: query.platforms, metrics: query.metrics } },
+      ),
     bestTimes: (username: string, query: { timezone?: string; platforms?: string[] } = {}) => this.request('GET', `/v1/best-times/${enc(username)}`, { query }),
     report: (username: string, days = 30) => this.request('GET', `/v1/reports/${enc(username)}`, { query: { days } }),
+  };
+
+  /** Comments under posts, in one shape for every network that has them. */
+  readonly comments = {
+    /** Comments under a post (newest first where the network can sort), or replies to `commentId`. On X, no post lists the mentions. */
+    list: (target: CommentTarget & { commentId?: string; held?: boolean; limit?: number; cursor?: string }) =>
+      this.request<Json & { success: true; platform: string; comments: Comment[]; pagination: { next_cursor: string | null; has_next: boolean }; cached: boolean }>('GET', '/v1/comments', {
+        query: { ...commentTarget(target), comment_id: target.commentId, held: target.held === undefined ? undefined : String(target.held), limit: target.limit, cursor: target.cursor },
+      }),
+    /** Every comment, page by page: `for await (const c of reelspan.comments.all({ platform: 'youtube', user, postId }))`. */
+    all: (target: CommentTarget & { commentId?: string; held?: boolean }) => this.commentRows(target),
+    /** Comments on the post, or replies to `commentId`. `attachmentUrl` puts an image under it on Facebook. */
+    create: (target: CommentTarget & { message: string; commentId?: string; attachmentUrl?: string }) =>
+      this.request<Json & { success: true; platform: string; id: string; url?: string | null }>('POST', '/v1/comments', {
+        json: { ...commentTarget(target), message: target.message, comment_id: target.commentId, attachment_url: target.attachmentUrl },
+      }),
+    /** Replies to a comment in public. */
+    reply: (target: CommentTarget & { commentId: string; message: string }) =>
+      this.request<Json & { success: true; id: string }>('POST', '/v1/comments/public-reply', { json: { ...commentTarget(target), comment_id: target.commentId, message: target.message } }),
+    /** Answers a comment with a direct message to its author (Instagram, under 7 days and once per comment; Facebook). */
+    privateReply: (p: { platform: Platform | (string & {}); user: string; commentId: string; message: string; buttons?: LinkButton[] }) =>
+      this.request<Json & { success: true; recipient_id: string | null; message_id: string | null }>('POST', '/v1/comments/reply', {
+        json: { platform: p.platform, user: p.user, comment_id: p.commentId, message: p.message, buttons: p.buttons },
+      }),
+    /** Hides, likes, approves, holds, edits (with `message`) or bans the author of a comment; each network allows its own. */
+    moderate: (target: CommentTarget & { action: CommentAction; commentId?: string; message?: string }) =>
+      this.request<Json & { success: true; action: string }>('POST', '/v1/comments/action', { json: { ...commentTarget(target), action: target.action, comment_id: target.commentId, message: target.message } }),
+    /** Your own comments; on Instagram, Facebook and YouTube any comment on your posts. LinkedIn needs the post too. */
+    delete: (target: CommentTarget & { commentId: string }) =>
+      this.request<Json & { success: true }>('DELETE', '/v1/comments', { json: { ...commentTarget(target), comment_id: target.commentId } }),
+  };
+
+  private async *commentRows(target: CommentTarget & { commentId?: string; held?: boolean }) {
+    for (let cursor: string | undefined; ; ) {
+      const r = await this.comments.list({ ...target, limit: 100, cursor });
+      yield* r.comments;
+      if (!r.pagination.has_next || !r.pagination.next_cursor || !r.comments.length) return;
+      cursor = r.pagination.next_cursor;
+    }
+  }
+
+  /** Direct messages. Instagram and Facebook answer only people who wrote to the account in the last 24 hours. */
+  readonly dms = {
+    /** Conversations, newest first, each with its latest messages. */
+    conversations: (p: { platform: Platform | (string & {}); user: string; limit?: number; cursor?: string; participantId?: string; messagesLimit?: number }) =>
+      this.request<Json & { success: true; platform: string; conversations: Json[]; pagination: { next_cursor: string | null; has_more: boolean } }>('GET', '/v1/dms/conversations', {
+        query: { platform: p.platform, user: p.user, limit: p.limit, cursor: p.cursor, participant_id: p.participantId, messages_limit: p.messagesLimit },
+      }),
+    /** Sends a message. `recipientId`: the scoped user id on Instagram/Facebook, the user id on X, a handle or DID on Bluesky, @user@server on Mastodon. */
+    send: (p: {
+      platform: Platform | (string & {});
+      user: string;
+      recipientId: string;
+      message: string;
+      buttons?: LinkButton[];
+      attachments?: { type: 'image' | 'video' | 'audio' | 'file'; url: string }[];
+      quickReplies?: { title: string; payload?: string }[];
+      replyTo?: string;
+    }) =>
+      this.request<Json & { success: true; platform: string; recipient_id: string; message_id: string | null }>('POST', '/v1/dms/send', {
+        json: { platform: p.platform, user: p.user, recipient_id: p.recipientId, message: p.message, buttons: p.buttons, attachments: p.attachments, quick_replies: p.quickReplies, reply_to: p.replyTo },
+      }),
+  };
+
+  /** AutoDM monitors: answer each new comment on a post, privately and/or in public, for 15 days. */
+  readonly autodms = {
+    /**
+     * Starts a monitor on a post. `replyMessage` is the private reply (a DM to each commenter); `replyMessages` are
+     * public replies used in turn, with `{username}` replaced. `triggerKeywords` answers only comments containing one.
+     */
+    start: (
+      target: CommentTarget & {
+        replyMessage?: string;
+        replyMessages?: string[];
+        buttons?: LinkButton[];
+        triggerKeywords?: string[];
+        /** Minutes between checks, 5 to 1440 (default 15) */
+        monitoringInterval?: number;
+        /** Also answer comments made in the 7 days before it started */
+        includeExisting?: boolean;
+      },
+    ) =>
+      this.request<Json & { success: true; monitor: AutoDmMonitor }>('POST', '/v1/autodms', {
+        json: {
+          ...commentTarget(target),
+          reply_message: target.replyMessage,
+          reply_messages: target.replyMessages,
+          buttons: target.buttons,
+          trigger_keywords: target.triggerKeywords,
+          monitoring_interval: target.monitoringInterval,
+          include_existing: target.includeExisting,
+        },
+      }),
+    list: (query: { includeInactive?: boolean; user?: string; platform?: string } = {}) =>
+      this.request<Json & { success: true; monitors: AutoDmMonitor[]; total_active: number; total: number }>('GET', '/v1/autodms', {
+        query: { include_inactive: query.includeInactive === undefined ? undefined : String(query.includeInactive), profile_username: query.user, platform: query.platform },
+      }),
+    get: (monitorId: string) => this.request<Json & { success: true; monitor: AutoDmMonitor }>('GET', `/v1/autodms/${enc(monitorId)}`),
+    /** What the monitor answered (and skipped), newest first. */
+    logs: (monitorId: string, limit?: number) =>
+      this.request<Json & { success: true; logs: { comment_id: string; author: string | null; text: string | null; kind: string; success: boolean; error: string | null; at: string }[] }>('GET', `/v1/autodms/${enc(monitorId)}/logs`, { query: { limit } }),
+    pause: (monitorId: string) => this.request<Json & { success: true; monitor: AutoDmMonitor }>('POST', `/v1/autodms/${enc(monitorId)}/pause`),
+    resume: (monitorId: string) => this.request<Json & { success: true; monitor: AutoDmMonitor }>('POST', `/v1/autodms/${enc(monitorId)}/resume`),
+    /** Stops the monitor for good. */
+    stop: (monitorId: string) => this.request<Json & { success: true; monitor: AutoDmMonitor }>('POST', `/v1/autodms/${enc(monitorId)}/stop`),
+    /** Checks a running monitor's post now instead of at the next interval. */
+    check: (monitorId: string) => this.request<Json & { success: true; result: Json; monitor: AutoDmMonitor }>('POST', `/v1/autodms/${enc(monitorId)}/check`),
+    /** Deletes the monitor and its logs. */
+    delete: (monitorId: string) => this.request<Json & { success: true }>('DELETE', `/v1/autodms/${enc(monitorId)}`),
+  };
+
+  /** Published YouTube videos: subtitle tracks and thumbnails. */
+  readonly youtube = {
+    subtitles: {
+      list: (video: YouTubeVideo) => this.request<Json & { success: true; video_id: string; subtitles: SubtitleTrack[] }>('GET', '/v1/youtube/subtitles', { query: ytVideo(video) }),
+      /** Adds a track from a `file` (SRT, VTT, SBV…, up to 5 MB), its `text`, or a public `url`. `language` is BCP-47: en, ur, pt-BR… */
+      add: (video: YouTubeVideo & { language: string; name?: string; file?: Exclude<FileInput, string>; text?: string; url?: string }) => {
+        const fields = { ...ytVideo(video), language: video.language, name: video.name, subtitle_text: video.text, subtitle_url: video.url };
+        if (video.file === undefined) return this.request<Json & { success: true; video_id: string; subtitle: SubtitleTrack }>('POST', '/v1/youtube/subtitles', { json: fields });
+        const form = new FormData();
+        appendFields(form, fields);
+        appendFile(form, 'subtitles', video.file);
+        return this.request<Json & { success: true; video_id: string; subtitle: SubtitleTrack }>('POST', '/v1/youtube/subtitles', { form });
+      },
+      delete: (video: YouTubeVideo & { subtitleId: string }) =>
+        this.request<Json & { success: true; video_id: string; subtitle_id: string }>('DELETE', '/v1/youtube/subtitles', { json: { ...ytVideo(video), subtitle_id: video.subtitleId } }),
+    },
+    /**
+     * Sets a new thumbnail (JPEG, PNG, GIF or BMP up to 2 MB) from a file, bytes or public URL, or `mediaId` from
+     * media.upload. Needs a verified channel; Shorts don't show custom thumbnails.
+     */
+    setThumbnail: (video: YouTubeVideo & { thumbnail?: FileInput; mediaId?: string }) => {
+      type R = Json & { success: true; video_id: string; width: number | null; height: number | null; thumbnails: Json };
+      if (video.thumbnail === undefined || typeof video.thumbnail === 'string')
+        return this.request<R>('POST', '/v1/youtube/thumbnail', { json: { ...ytVideo(video), thumbnail_url: video.thumbnail, thumbnail_media_id: video.mediaId } });
+      const form = new FormData();
+      appendFields(form, ytVideo(video));
+      appendFile(form, 'thumbnail', video.thumbnail);
+      return this.request<R>('POST', '/v1/youtube/thumbnail', { form });
+    },
+  };
+
+  /** The Facebook Pages connected to a profile, and which one posts go to. */
+  readonly facebook = {
+    pages: (username: string) =>
+      this.request<Json & { success: true; pages: { id: string; name: string; picture: string | null; account_id: string; selected: boolean; followers: number | null; likes: number | null }[]; selected_page_id: string | null; selected_page_name: string | null }>(
+        'GET',
+        '/v1/facebook/pages',
+        { query: { profile_username: username } },
+      ),
+    /** The Page used when a post sends no facebook_page_id. */
+    selectPage: (username: string, pageId: string) =>
+      this.request<Json & { success: true; facebook_page_id: string; facebook_page_name: string }>('POST', '/v1/facebook/page', { json: { profile_username: username, facebook_page_id: pageId } }),
+    clearPage: (username: string) => this.request<Json & { success: true }>('DELETE', '/v1/facebook/page', { json: { profile_username: username } }),
+    /** A Page's about, website, phone, hours, category, picture and cover (default: the chosen Page). */
+    pageInfo: (username: string, pageId?: string) => this.request<Json & { success: true; page_id: string; page: Json }>('GET', '/v1/facebook/page-info', { query: { profile_username: username, page_id: pageId } }),
+    /** Changes a Page's details; `validateOnly` reports what would change without saving. */
+    updatePageInfo: (
+      username: string,
+      info: { pageId?: string; validateOnly?: boolean; about?: string; description?: string; website?: string; phone?: string; emails?: string[]; hours?: Record<string, string>; [field: string]: unknown },
+    ) => {
+      const { pageId, validateOnly, ...fields } = info;
+      return this.request('PATCH', '/v1/facebook/page-info', { json: { profile_username: username, page_id: pageId, validate_only: validateOnly, ...fields } });
+    },
+  };
+
+  /** LinkedIn company pages the profile's member administers, and which one posts go out as. */
+  readonly linkedin = {
+    pages: (username: string) =>
+      this.request<Json & { success: true; pages: { id: string; urn: string; name: string; vanity_name: string | null; picture: string | null; followers: number | null; selected: boolean }[]; selected_page_id: string | null; selected_page_name: string | null }>(
+        'GET',
+        '/v1/linkedin/pages',
+        { query: { profile_username: username } },
+      ),
+    /** Posts with no target_linkedin_page_id go out as this page. */
+    selectPage: (username: string, pageId: string) =>
+      this.request<Json & { success: true; linkedin_page_id: string; linkedin_page_name: string }>('POST', '/v1/linkedin/page', { json: { profile_username: username, linkedin_page_id: pageId } }),
+    /** Posts go out as the member again. */
+    clearPage: (username: string) => this.request<Json & { success: true }>('DELETE', '/v1/linkedin/page', { json: { profile_username: username } }),
+  };
+
+  /** Google Business locations, and which one posts go to. */
+  readonly googleBusiness = {
+    /** As saved when the account was connected; `refresh` reads them again from Google. */
+    locations: (username: string, opts: { refresh?: boolean } = {}) =>
+      this.request<Json & { success: true; locations: { id: string; name: string; title: string; account_id: string; selected: boolean }[]; selected_location_id: string | null; selected_location_name: string | null }>(
+        'GET',
+        '/v1/google-business/locations',
+        { query: { profile_username: username, refresh: opts.refresh ? 'true' : undefined } },
+      ),
+    selectLocation: (username: string, locationId: string) =>
+      this.request<Json & { success: true; location_id: string; location_name: string }>('POST', '/v1/google-business/location', { json: { profile_username: username, location_id: locationId } }),
+    clearLocation: (username: string) => this.request<Json & { success: true }>('DELETE', '/v1/google-business/location', { json: { profile_username: username } }),
+  };
+
+  readonly tiktok = {
+    /** What the profile's TikTok account may post: privacy levels, interactions and its longest video. */
+    creatorInfo: (username: string) => this.request<Json & { success: true }>('GET', '/v1/tiktok/creator-info', { query: { profile_username: username } }),
+  };
+
+  readonly reddit = {
+    /** The account's Reddit posts with score, comments, views and media (`source` says whether from Reddit or Reelspan). Page with `after`. */
+    posts: (username: string, query: { limit?: number; after?: string } = {}) =>
+      this.request<Json & { success: true; source: 'account' | 'reelspan'; posts: Json[]; after: string | null }>('GET', '/v1/reddit/posts', { query: { profile_username: username, ...query } }),
+  };
+
+  /** What a profile's Instagram and Threads accounts may still post in the next 24 hours, read live. */
+  publishingLimits(username: string, opts: { platform?: 'instagram' | 'threads'; refresh?: boolean } = {}) {
+    type Read = { limit_reached: boolean; fetched_at: string; cached: boolean };
+    return this.request<Json & { success: true; limits: { instagram?: Read & { posts: LimitWindow }; threads?: Read & { posts: LimitWindow; replies: LimitWindow } }; errors?: Record<string, { error: string; error_code: string }> }>(
+      'GET',
+      '/v1/publishing-limits',
+      { query: { profile_username: username, platform: opts.platform, refresh: opts.refresh ? 'true' : undefined } },
+    );
+  }
+
+  /** Features that wait for a network's approval, and which are live. */
+  permissions() {
+    return this.request<Json & { success: true; permissions: { id: string; platform: string; unlocks: string; approval: string; scopes: string[]; status: 'live' | 'pending' }[] }>('GET', '/v1/permissions');
+  }
+
+  /** The workspace's activity log, newest first: what was done and by whom (a team member, an API key or Reelspan). */
+  activity(query: { limit?: number; before?: string; profile?: string; type?: ActivityType } = {}) {
+    return this.request<Json & { success: true; activity: ActivityEntry[]; next_cursor: string | null }>('GET', '/v1/activity', { query });
+  }
+
+  /** Workspace preferences: the first day of the week, and the zone scheduled_date is read in when a post sends none. */
+  readonly preferences = {
+    get: () => this.request<Json & { success: true; preferences: Preferences }>('GET', '/v1/preferences'),
+    /** Send only what changes; `timezone: null` goes back to UTC. */
+    set: (prefs: Partial<Preferences>) => this.request<Json & { success: true; preferences: Preferences }>('POST', '/v1/preferences', { json: prefs }),
   };
 
   readonly approvals = {

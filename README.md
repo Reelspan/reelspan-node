@@ -97,8 +97,57 @@ await reelspan.scheduled.list({ profile_username: 'my-brand' });
 await reelspan.scheduled.cancel(jobId, { withLaterRepeats: true });
 ```
 
-Also: `queue`, `library`, `approvals`, `ai` (captions from a video or your text), `pinterest.createBoard`,
-`webhooks` (account and per-profile), and `request(method, path)` for anything else.
+## Live posts
+
+```ts
+await reelspan.posts.edit({ requestId, platform: 'x', text: 'Fixed the typo' });
+await reelspan.posts.repost({ platform: 'linkedin', user: 'my-brand', postId: 'urn:li:share:…', commentary: 'Worth a read' });
+await reelspan.posts.unpublish({ requestId, platform: 'facebook' });
+
+await reelspan.youtube.subtitles.add({ requestId, language: 'en', file: { data: srt, name: 'en.srt' } });
+await reelspan.youtube.setThumbnail({ user: 'my-brand', videoId: 'dQw4w9WgXcQ', thumbnail: 'https://…/cover.jpg' });
+```
+
+## Comments, DMs and AutoDM
+
+```ts
+for await (const c of reelspan.comments.all({ platform: 'instagram', user: 'my-brand', requestId })) console.log(c.author.username, c.text);
+await reelspan.comments.reply({ platform: 'instagram', user: 'my-brand', requestId, commentId, message: 'Thank you!' });
+await reelspan.comments.moderate({ platform: 'youtube', user: 'my-brand', postId, commentId, action: 'hide' });
+
+await reelspan.dms.send({ platform: 'instagram', user: 'my-brand', recipientId, message: 'Here is the link', buttons: [{ title: 'Open', url: 'https://…' }] });
+
+// answer every comment that says "link" with a DM, for 15 days
+const { monitor } = await reelspan.autodms.start({ platform: 'instagram', user: 'my-brand', requestId, replyMessage: 'Here you go: https://…', triggerKeywords: ['link'] });
+await reelspan.autodms.logs(monitor.monitor_id);
+```
+
+## All methods
+
+| Group | Methods |
+| --- | --- |
+| account | `me()`, `platforms()`, `permissions()`, `activity()`, `publishingLimits()`, `preferences.get/set` |
+| `profiles` | `list`, `get`, `create`, `rename`, `delete` |
+| `accounts`, `connect` | `accounts.connect/disconnect`, `connect.link/validate/oauthStart` |
+| `posts` | `video`, `photos`, `text`, `document`, `status`, `wait`, `retry`, `history`, `all`, `edit`, `unpublish`, `repost` |
+| `scheduled` | `list`, `get`, `edit`, `cancel`, `preview`, `thumbnail` |
+| `queue` | `settings`, `setSettings`, `preview`, `nextSlot`, `markFull`, `markOpen` |
+| `media`, `library` | `media.upload`; `library.list/keep/import/remove/fileUrl` |
+| `analytics` | `account`, `history`, `post`, `postById`, `impressions`, `bestTimes`, `report` |
+| `comments` | `list`, `all`, `create`, `reply`, `privateReply`, `moderate`, `delete` |
+| `dms` | `conversations`, `send` |
+| `autodms` | `start`, `list`, `get`, `logs`, `pause`, `resume`, `stop`, `check`, `delete` |
+| `youtube` | `subtitles.list/add/delete`, `setThumbnail` |
+| `facebook` | `pages`, `selectPage`, `clearPage`, `pageInfo`, `updatePageInfo` |
+| `linkedin` | `pages`, `selectPage`, `clearPage` |
+| `googleBusiness` | `locations`, `selectLocation`, `clearLocation` |
+| `pinterest` | `boards`, `createBoard`, `sections`, `createSection`, `savePin` |
+| `tiktok`, `reddit` | `tiktok.creatorInfo`, `reddit.posts` |
+| `ai` | `writeCaptions`, `rewriteCaptions` |
+| `approvals` | `create`, `list`, `delete` |
+| `webhooks` | `get`, `set`, `delete`, `test`, `deliveries`, `redeliver`, `rotateSecret`, `profile.get/set/delete` |
+
+`request(method, path)` reaches anything else.
 
 ## Webhooks
 

@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.1.0
+
+Covers the rest of the v1 API.
+
+- Comments: `comments.list` (and `comments.all` to page through), `create`, `reply`, `privateReply`, `moderate`
+  (hide, like, approve, hold, edit, ban the author…) and `delete`.
+- Direct messages: `dms.conversations` and `dms.send`.
+- AutoDM monitors: `autodms.start`, `list`, `get`, `logs`, `pause`, `resume`, `stop`, `check` and `delete`.
+- Live posts: `posts.edit`, `posts.unpublish` and `posts.repost`; `posts.retry` takes `scheduledDate` to retry later.
+- YouTube: `youtube.subtitles.list/add/delete` (a file, text or URL) and `youtube.setThumbnail`.
+- Network choices: `facebook.pages/selectPage/clearPage/pageInfo/updatePageInfo`, `linkedin.pages/selectPage/clearPage`,
+  `googleBusiness.locations/selectLocation/clearLocation`, `pinterest.boards/sections/createSection/savePin` (and
+  `createBoard` takes a description and privacy), `tiktok.creatorInfo`, `reddit.posts`.
+- Analytics: `analytics.postById` (any post, by the network's id) and `analytics.impressions` (totals over a period).
+- Scheduled posts: `scheduled.preview` (signed media links) and `scheduled.thumbnail`.
+- Account: `activity()`, `permissions()`, `publishingLimits()` and `preferences.get/set`.
+
 ## 1.0.2
 
 - Removed captions from a video file (`POST /v1/ai/video-captions` is gone). Upload the video, then write captions

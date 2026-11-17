@@ -124,6 +124,82 @@ test('connects a credential network', async () => {
   assert.deepEqual(JSON.parse(calls[0].init.body), { profile_username: 'brand', bot_token: '1:abc', chat_id: '@news' });
 });
 
+test('lists comments with the post and paging, and walks every page', async () => {
+  const { client, calls } = fake((url) => {
+    const cursor = new URL(url).searchParams.get('cursor');
+    return json({ success: true, platform: 'youtube', comments: [{ id: cursor ?? 'c1', text: 'hi' }], pagination: { next_cursor: cursor ? null : 'c2', has_next: !cursor }, cached: false });
+  });
+  await client.comments.list({ platform: 'youtube', user: 'brand', postId: 'vid1', held: true, limit: 10 });
+  const q = new URL(calls[0].url).searchParams;
+  assert.equal(new URL(calls[0].url).pathname, '/v1/comments');
+  assert.deepEqual(Object.fromEntries(q), { platform: 'youtube', user: 'brand', post_id: 'vid1', held: 'true', limit: '10' });
+  const ids = [];
+  for await (const c of client.comments.all({ platform: 'youtube', user: 'brand', postId: 'vid1' })) ids.push(c.id);
+  assert.deepEqual(ids, ['c1', 'c2']);
+});
+
+test('moderates and deletes comments in snake_case JSON', async () => {
+  const { client, calls } = fake(() => json({ success: true, action: 'hide' }));
+  await client.comments.moderate({ platform: 'instagram', user: 'brand', commentId: 'c9', action: 'hide' });
+  assert.equal(calls[0].url, 'https://api.test/v1/comments/action');
+  assert.deepEqual(JSON.parse(calls[0].init.body), { platform: 'instagram', user: 'brand', comment_id: 'c9', action: 'hide' });
+  await client.comments.delete({ platform: 'instagram', user: 'brand', commentId: 'c9' });
+  assert.equal(calls[1].init.method, 'DELETE');
+  assert.deepEqual(JSON.parse(calls[1].init.body), { platform: 'instagram', user: 'brand', comment_id: 'c9' });
+});
+
+test('sends a DM and starts and controls an AutoDM monitor', async () => {
+  const { client, calls } = fake(() => json({ success: true, monitor: { monitor_id: 'm1', status: 'running' } }));
+  await client.dms.send({ platform: 'instagram', user: 'brand', recipientId: 'u1', message: 'Thanks!', quickReplies: [{ title: 'Yes' }] });
+  assert.deepEqual(JSON.parse(calls[0].init.body), { platform: 'instagram', user: 'brand', recipient_id: 'u1', message: 'Thanks!', quick_replies: [{ title: 'Yes' }] });
+  await client.autodms.start({ platform: 'instagram', user: 'brand', requestId: 'req_1', replyMessage: 'Link inside', triggerKeywords: ['link'], monitoringInterval: 30 });
+  assert.equal(calls[1].url, 'https://api.test/v1/autodms');
+  assert.deepEqual(JSON.parse(calls[1].init.body), { platform: 'instagram', user: 'brand', request_id: 'req_1', reply_message: 'Link inside', trigger_keywords: ['link'], monitoring_interval: 30 });
+  await client.autodms.pause('m1');
+  await client.autodms.logs('m1', 20);
+  assert.equal(calls[2].url, 'https://api.test/v1/autodms/m1/pause');
+  assert.equal(calls[3].url, 'https://api.test/v1/autodms/m1/logs?limit=20');
+});
+
+test('edits, unpublishes and reposts live posts', async () => {
+  const { client, calls } = fake(() => json({ success: true, platform: 'x', post_id: '2' }));
+  await client.posts.edit({ requestId: 'req_1', platform: 'x', text: 'Fixed typo', fields: { x_keep_links: 'true' } });
+  assert.deepEqual(JSON.parse(calls[0].init.body), { request_id: 'req_1', platform: 'x', text: 'Fixed typo', fields: { x_keep_links: 'true' } });
+  await client.posts.unpublish({ platform: 'bluesky', user: 'brand', postId: 'at://p' });
+  assert.equal(calls[1].url, 'https://api.test/v1/posts/unpublish');
+  await client.posts.repost({ platform: 'linkedin', user: 'brand', postId: 'urn:li:share:1', commentary: 'Worth a read', targetLinkedinPageId: '42' });
+  assert.equal(JSON.parse(calls[2].init.body).target_linkedin_page_id, '42');
+});
+
+test('adds YouTube subtitles from a file as multipart, and from text as JSON', async () => {
+  const { client, calls } = fake(() => json({ success: true, video_id: 'v1', subtitle: { id: 's1' } }));
+  await client.youtube.subtitles.add({ user: 'brand', videoId: 'v1', language: 'en', file: { data: new TextEncoder().encode('WEBVTT'), name: 'en.srt' } });
+  const form = calls[0].init.body;
+  assert.equal(form.get('video_id'), 'v1');
+  assert.equal(form.get('language'), 'en');
+  assert.equal(form.get('subtitles').name, 'en.srt');
+  await client.youtube.subtitles.add({ requestId: 'req_1', language: 'ur', text: 'WEBVTT' });
+  assert.deepEqual(JSON.parse(calls[1].init.body), { request_id: 'req_1', language: 'ur', subtitle_text: 'WEBVTT' });
+});
+
+test('reads lookups, analytics by post id, impressions and the scheduled thumbnail link', async () => {
+  const { client, calls } = fake(() => json({ success: true }));
+  await client.facebook.selectPage('brand', 'p1');
+  assert.deepEqual(JSON.parse(calls[0].init.body), { profile_username: 'brand', facebook_page_id: 'p1' });
+  await client.pinterest.sections('brand', 'b 1');
+  assert.equal(calls[1].url, 'https://api.test/v1/pinterest/boards/b%201/sections?profile_username=brand');
+  await client.analytics.postById('brand', 'instagram', '1789');
+  assert.equal(calls[2].url, 'https://api.test/v1/post-analytics?profile_username=brand&platform=instagram&platform_post_id=1789');
+  await client.analytics.impressions('brand', { startDate: '2026-10-01', endDate: '2026-10-31', platforms: ['x', 'threads'] });
+  assert.equal(calls[3].url, 'https://api.test/v1/analytics/brand/impressions?start_date=2026-10-01&end_date=2026-10-31&platforms=x%2Cthreads');
+  await client.scheduled.thumbnail('job_1');
+  assert.equal(calls[4].url, 'https://api.test/v1/scheduled/job_1/thumbnail?format=json');
+  await client.publishingLimits('brand', { refresh: true });
+  assert.equal(calls[5].url, 'https://api.test/v1/publishing-limits?profile_username=brand&refresh=true');
+  await client.preferences.set({ timezone: null });
+  assert.deepEqual(JSON.parse(calls[6].init.body), { timezone: null });
+});
+
 test('verifies webhook signatures', async () => {
   const ts = String(Math.floor(Date.now() / 1000));
   const body = '{"event":"upload_completed"}';
