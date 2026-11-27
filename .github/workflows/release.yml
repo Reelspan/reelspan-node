@@ -1,24 +1,59 @@
-# Publishes to npm when a GitHub release is published (tag v1.2.3, matching package.json). Uses npm trusted
-# publishing: no token is stored here; npmjs.com trusts this workflow, and the package gets a provenance statement.
+# Releasing is one step: raise the version in package.json (with its CHANGELOG section) and push to main. When the
+# version has no GitHub release yet, this tests, publishes to npm with trusted publishing (no token is stored here;
+# npmjs.com trusts this workflow, and the package gets a provenance statement), then creates the release v1.2.3 with
+# that version's CHANGELOG section as its notes. Other pushes stop after the check.
 name: Release
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
+  workflow_dispatch:
 permissions:
   contents: read
-  id-token: write
+concurrency: release
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      new: ${{ steps.v.outputs.new }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="$(node -p "require('./package.json').version")"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if gh release view "v$v" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then echo "new=false" >> "$GITHUB_OUTPUT"; else echo "new=true" >> "$GITHUB_OUTPUT"; fi
   publish:
+    needs: check
+    if: needs.check.outputs.new == 'true'
     runs-on: ubuntu-latest
     environment: npm
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-      - name: Tag matches package.json
-        run: test "v$(node -p "require('./package.json').version")" = "${GITHUB_REF_NAME}"
       - run: npm ci
       - run: npm test
-      - run: npm publish --provenance --access public
+      - name: The code says the same version
+        run: grep -q "VERSION = '${{ needs.check.outputs.version }}'" src/index.ts
+      - name: Publish to npm
+        run: |
+          if npm view "$(node -p "require('./package.json').name")@${{ needs.check.outputs.version }}" version >/dev/null 2>&1; then
+            echo "Already on npm"
+          else
+            npm publish --provenance --access public
+          fi
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ needs.check.outputs.version }}
+        run: |
+          awk -v v="$V" '$0=="## "v{f=1;next} /^## /{if(f)exit} f' CHANGELOG.md > notes.md
+          gh release create "v$V" --target "$GITHUB_SHA" --title "$V" --notes-file notes.md
