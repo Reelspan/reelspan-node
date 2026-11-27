@@ -214,3 +214,13 @@ test('the CommonJS build loads with require', () => {
   assert.equal(typeof cjs.Reelspan, 'function');
   assert.equal(cjs.VERSION, VERSION);
 });
+
+test('checks account sign-ins and waits for results on the server', async () => {
+  const { client, calls } = fake(() => json({ success: true, status: 'completed', results: [] }));
+  await client.accounts.health('brand');
+  assert.equal(calls[0].url, 'https://api.test/v1/accounts/health?profile=brand');
+  await client.posts.status({ requestId: 'r1', waitSeconds: 90 });
+  assert.equal(calls[1].url, 'https://api.test/v1/posts/status?request_id=r1&wait=90');
+  await client.posts.wait('r1', { timeoutMs: 30_000 });
+  assert.match(calls[2].url, /\/v1\/posts\/status\?request_id=r1&wait=(29|30)$/);
+});

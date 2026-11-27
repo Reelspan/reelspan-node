@@ -4,7 +4,7 @@
 // Robust by default: network errors, 429s and 5xx answers are retried with backoff (honouring Retry-After), and every
 // post carries an Idempotency-Key, so a retried post is never published twice.
 
-export const VERSION = '1.1.0';
+export const VERSION = '1.2.0';
 
 export type Fields = Record<string, string | number | boolean | string[] | undefined | null>;
 /** A file to upload: bytes with a name, a Blob or File, or a public https URL (Google Drive and Dropbox share links work). */
@@ -331,6 +331,12 @@ export class Reelspan {
     connect: (username: string, platform: Platform | (string & {}), credentials: Record<string, string | number | string[]>) =>
       this.request<Json & { success: true; platform: string; account: string; reconnected: boolean }>('POST', `/v1/accounts/${enc(platform)}`, { json: { profile_username: username, ...credentials } }),
     disconnect: (username: string, platform: string) => this.request('DELETE', '/v1/accounts', { json: { profile_username: username, social_platform: platform } }),
+    /**
+     * Checks live that each account of a profile is still signed in, and when its access runs out: each one is `ok`,
+     * `signed_out`, `expiring` (within 7 days), `not_checked` or `error`. Run it before a batch of posts.
+     */
+    health: (username: string) =>
+      this.request<Json & { success: true; profile_username: string; ok: boolean; accounts: (Json & { platform: string; handle: string | null; status: 'ok' | 'signed_out' | 'expiring' | 'not_checked' | 'error'; message: string; access_expires_at: string | null; reconnect_by: string | null })[] }>('GET', '/v1/accounts/health', { query: { profile: username } }),
   };
 
   /** Connecting accounts for people who have no Reelspan login (your customers). */
@@ -387,16 +393,23 @@ export class Reelspan {
       if (p.document !== undefined) appendFile(form, 'document', p.document);
       return this.request<PostResponse>('POST', '/v1/posts/document', { form, ...postOpts(p) });
     },
-    /** Each network's result for a request_id (or a scheduled job_id). */
-    status: (id: { requestId?: string; jobId?: string }) => this.request<PostStatus>('GET', '/v1/posts/status', { query: { request_id: id.requestId, job_id: id.jobId } }),
-    /** Polls status until every network has finished (or the timeout passes). */
-    /** Polls status (every 5 s by default, the API's advice) until every network has finished, or the timeout passes. */
+    /**
+     * Each network's result for a request_id (or a scheduled job_id). `waitSeconds` (up to 120) has the answer wait until
+     * every network has finished.
+     */
+    status: (id: { requestId?: string; jobId?: string; waitSeconds?: number }) =>
+      this.request<PostStatus>('GET', '/v1/posts/status', { query: { request_id: id.requestId, job_id: id.jobId, wait: id.waitSeconds } }),
+    /**
+     * Waits until every network has finished, or the timeout passes. The server holds each answer up to a minute until
+     * something finishes, so this makes a handful of calls instead of polling every few seconds.
+     */
     wait: async (requestId: string, opts: { timeoutMs?: number; intervalMs?: number; signal?: AbortSignal } = {}) => {
       const end = Date.now() + (opts.timeoutMs ?? 600_000);
       for (;;) {
-        const s = await this.request<PostStatus>('GET', '/v1/posts/status', { query: { request_id: requestId }, signal: opts.signal });
+        const left = Math.max(0, Math.floor((end - Date.now()) / 1000));
+        const s = await this.request<PostStatus>('GET', '/v1/posts/status', { query: { request_id: requestId, wait: Math.min(60, left) }, signal: opts.signal });
         if (['completed', 'failed', 'cancelled'].includes(s.status) || Date.now() > end) return s;
-        await sleep(opts.intervalMs ?? 5000, opts.signal);
+        await sleep(opts.intervalMs ?? 1000, opts.signal);
       }
     },
     /**
